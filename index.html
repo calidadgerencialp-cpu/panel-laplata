@@ -1,0 +1,55 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Panel de Control — La Plata S.R.L.</title>
+<style>
+  @import url('https://fonts.googleapis.com/css2?family=IBM+Plex+Sans:wght@400;500;600&display=swap');
+  *,*::before,*::after{box-sizing:border-box;margin:0;padding:0}
+  :root{--navy:#1F3864;--gold:#FFD700;--light:#F5F6FA;--border:#DDE1EC;--text:#1a1d2e;--muted:#6B7280}
+  body{font-family:'IBM Plex Sans',sans-serif;background:var(--light);color:var(--text);min-height:100vh}
+  .header{background:var(--navy);color:#fff;padding:1.25rem 2rem;display:flex;align-items:center;gap:1rem;border-bottom:4px solid var(--gold)}
+  .header-logo{background:var(--gold);color:var(--navy);font-weight:600;font-size:13px;padding:.4rem .75rem;border-radius:4px;white-space:nowrap}
+  .header h1{font-size:16px;font-weight:500;opacity:.9}
+  .main{max-width:900px;margin:2.5rem auto;padding:0 1.5rem 4rem}
+  .subtitle{font-size:13px;color:var(--muted);margin-bottom:1.5rem}
+  .grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(280px,1fr));gap:16px}
+  .card{background:#fff;border:1px solid var(--border);border-radius:10px;padding:1.5rem;display:flex;flex-direction:column}
+  .card-icon{width:40px;height:40px;border-radius:8px;background:#EEF2FF;color:var(--navy);display:flex;align-items:center;justify-content:center;font-size:20px;margin-bottom:1rem}
+  .card h2{font-size:15px;font-weight:600;margin-bottom:.5rem}
+  .card p{font-size:13px;color:var(--muted);line-height:1.5;flex-grow:1;margin-bottom:1rem}
+  .card a{display:flex;align-items:center;justify-content:center;gap:6px;padding:.7rem;border:none;border-radius:8px;background:var(--navy);color:#fff;font-size:14px;font-weight:600;text-decoration:none;transition:background .15s}
+  .card a:hover{background:#2a4d8a}
+</style>
+</head>
+<body>
+<div class="header">
+  <div class="header-logo">LA PLATA S.R.L.</div>
+  <h1>Panel de Control — Gestión de Calidad</h1>
+</div>
+<div class="main">
+  <p class="subtitle">Herramientas de auditoría y control documental</p>
+  <div class="grid">
+    <div class="card">
+      <div class="card-icon">&#128203;</div>
+      <h2>Control de documentos</h2>
+      <p>Checklist de auditoría por local (Empeños y Retiros), con export a Excel y PDF, y envío de reportes por correo.</p>
+      <a href="control-documentos/index.html">Abrir herramienta &#8599;</a>
+    </div>
+    <div class="card">
+      <div class="card-icon">&#128196;</div>
+      <h2>Generador de acta</h2>
+      <p>Genera el Acta Disciplinaria por Visita (FL-CAL-12) a partir del Informe de Visita en PDF.</p>
+      <a href="generador-acta/index.html">Abrir herramienta &#8599;</a>
+    </div>
+    <div class="card">
+      <div class="card-icon">&#128181;</div>
+      <h2>Faltante de caja</h2>
+      <p>Genera el documento de faltante de caja detectado durante la visita de auditoría.</p>
+      <a href="faltante-caja/index.html">Abrir herramienta &#8599;</a>
+    </div>
+  </div>
+</div>
+</body>
+</html>
