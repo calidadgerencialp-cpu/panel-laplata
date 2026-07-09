@@ -379,7 +379,7 @@ body{font-family:'Segoe UI',system-ui,sans-serif;background:#f0f3f7;color:var(--
 <script>
 // ─── ESTADO ───────────────────────────────────────
 let aud={n:'',ci:'',f:''};
-let dEmp=[],dRet=[],_correoEnviado=false;
+let dEmp=[],dRet=[];
 
 // ─── NORMATIVA ────────────────────────────────────
 const NORM_EMP={
@@ -562,82 +562,7 @@ function parseSheet(xml,ss){
 }
 function dX(s){return s.replace(/&amp;/g,'&').replace(/&lt;/g,'<').replace(/&gt;/g,'>').replace(/&quot;/g,'"').replace(/&#39;/g,"'");}
 
-// Almacena el zip para carga lazy de fotos
-let _zipRef=null;
-let _imgPathMap={};
-
-async function cargarFotoLazy(rowIdx,slot){
-  if(!_zipRef||!_imgPathMap[rowIdx])return null;
-  const path=slot===1?_imgPathMap[rowIdx].foto1:_imgPathMap[rowIdx].foto2;
-  if(!path)return null;
-  return await _loadImgFromZip(_zipRef,path);
-}
-
-async function _loadImgFromZip(zip,path){
-  const clean=path.replace(/^\/+/,'');
-  const entry=zip.files[clean]||zip.files['xl/'+clean.replace(/^xl\//,'')];
-  if(!entry)return null;
-  const bytes=await entry.async('uint8array');
-  const ext=path.split('.').pop().toLowerCase();
-  const mime=ext==='png'?'image/png':'image/jpeg';
-  let b64='';
-  const chunkSize=8192;
-  for(let i=0;i<bytes.length;i+=chunkSize){
-    b64+=String.fromCharCode(...bytes.subarray(i,i+chunkSize));
-  }
-  b64=btoa(b64);
-  const rawSrc=`data:${mime};base64,${b64}`;
-  let exifOrient=1;
-  try{
-    if(bytes[0]===0xFF&&bytes[1]===0xD8){
-      let off=2;
-      while(off<bytes.length-4){
-        if(bytes[off]!==0xFF)break;
-        const marker=bytes[off+1];
-        const len=(bytes[off+2]<<8)|bytes[off+3];
-        if(marker===0xE1){
-          const eh=String.fromCharCode(...bytes.slice(off+4,off+10));
-          if(eh.startsWith('Exif')){
-            const to=off+10;
-            const le=bytes[to]===0x49;
-            const rd=(o,n)=>n===2?(le?(bytes[to+o]|(bytes[to+o+1]<<8)):((bytes[to+o]<<8)|bytes[to+o+1])):0;
-            const ifd=le?(bytes[to+4]|(bytes[to+5]<<8)|(bytes[to+6]<<16)|(bytes[to+7]<<24)):((bytes[to+4]<<24)|(bytes[to+5]<<16)|(bytes[to+6]<<8)|bytes[to+7]);
-            const ent=rd(ifd,2);
-            for(let e=0;e<ent;e++){
-              const eo=ifd+2+e*12;
-              if(rd(eo,2)===0x0112){exifOrient=rd(eo+8,2);break;}
-            }
-          }
-        }
-        off+=2+len;
-      }
-    }
-  }catch(e){}
-  return await new Promise(res=>{
-    const img=new Image();
-    img.onload=()=>{
-      let rotDeg=exifOrient===6?90:exifOrient===8?-90:exifOrient===3?180:0;
-      if(rotDeg===0&&img.naturalHeight>img.naturalWidth)rotDeg=90;
-      if(rotDeg===0){res(rawSrc);return;}
-      const rad=rotDeg*Math.PI/180;
-      const cv=document.createElement('canvas');
-      cv.width=rotDeg===180?img.naturalWidth:img.naturalHeight;
-      cv.height=rotDeg===180?img.naturalHeight:img.naturalWidth;
-      const ctx=cv.getContext('2d');
-      ctx.translate(cv.width/2,cv.height/2);
-      ctx.rotate(rad);
-      ctx.drawImage(img,-img.naturalWidth/2,-img.naturalHeight/2);
-      res(cv.toDataURL('image/jpeg',0.98));
-    };
-    img.onerror=()=>res(rawSrc);
-    img.src=rawSrc;
-  });
-}
-
-
 async function extractImgs(zip){
-  _zipRef=zip;
-  _imgPathMap={};
   const m={};
   const df=Object.keys(zip.files).filter(f=>f.match(/xl\/drawings\/drawing\d+\.xml$/));
   if(!df.length)return m;
@@ -648,7 +573,79 @@ async function extractImgs(zip){
   const rid={};
   for(const r of rxml.matchAll(/Id="(rId\d+)"[^>]*Target="([^"]+)"/g))rid[r[1]]=r[2].replace(/^\//,'');
   for(const r of rxml.matchAll(/Target="([^"]+)"[^>]*Id="(rId\d+)"/g))rid[r[2]]=r[1].replace(/^\//,'');
-  // Solo mapear rutas — NO cargar imágenes todavía
+  const cache={};
+  const loadI=async(path)=>{
+    if(cache[path])return cache[path];
+    const clean=path.replace(/^\//,'');
+    const entry=zip.files[clean]||zip.files['xl/'+clean.replace(/^xl\//,'')];
+    if(!entry)return null;
+    const bytes=await entry.async('uint8array');
+    const ext=path.split('.').pop().toLowerCase();
+    const mime=ext==='png'?'image/png':'image/jpeg';
+    // btoa seguro para imágenes grandes
+    let b64='';
+    const chunkSize=8192;
+    for(let i=0;i<bytes.length;i+=chunkSize){
+      b64+=String.fromCharCode(...bytes.subarray(i,i+chunkSize));
+    }
+    b64=btoa(b64);
+    const rawSrc=`data:${mime};base64,${b64}`;
+    // Leer orientación EXIF
+    const exifOrient=(()=>{
+      try{
+        // Buscar marcador EXIF en bytes JPEG
+        if(bytes[0]===0xFF&&bytes[1]===0xD8){
+          let off=2;
+          while(off<bytes.length-4){
+            if(bytes[off]!==0xFF)break;
+            const marker=bytes[off+1];
+            const len=(bytes[off+2]<<8)|bytes[off+3];
+            if(marker===0xE1){
+              // APP1 - puede tener EXIF
+              const exifHeader=String.fromCharCode(...bytes.slice(off+4,off+10));
+              if(exifHeader.startsWith('Exif')){
+                const tiffOff=off+10;
+                const le=bytes[tiffOff]===0x49; // little endian
+                const rd=(o,n)=>n===2?(le?(bytes[tiffOff+o]|(bytes[tiffOff+o+1]<<8)):((bytes[tiffOff+o]<<8)|bytes[tiffOff+o+1])):0;
+                const ifdOff=le?(bytes[tiffOff+4]|(bytes[tiffOff+5]<<8)|(bytes[tiffOff+6]<<16)|(bytes[tiffOff+7]<<24)):((bytes[tiffOff+4]<<24)|(bytes[tiffOff+5]<<16)|(bytes[tiffOff+6]<<8)|bytes[tiffOff+7]);
+                const entries=rd(ifdOff,2);
+                for(let e=0;e<entries;e++){
+                  const eOff=ifdOff+2+e*12;
+                  const tag=rd(eOff,2);
+                  if(tag===0x0112){return rd(eOff+8,2);}
+                }
+              }
+            }
+            off+=2+len;
+          }
+        }
+      }catch(e){}
+      return 1;
+    })();
+    // Rotar según EXIF, o por dimensiones si no hay EXIF
+    const rotated=await new Promise(res=>{
+      const img=new Image();
+      img.onload=()=>{
+        let rotDeg=exifOrient===6?90:exifOrient===8?-90:exifOrient===3?180:0;
+        // Si no hay rotación EXIF pero alto > ancho, rotar 90°
+        if(rotDeg===0&&img.naturalHeight>img.naturalWidth)rotDeg=90;
+        if(rotDeg===0){res(rawSrc);return;}
+        const rad=rotDeg*Math.PI/180;
+        const cv=document.createElement('canvas');
+        cv.width=rotDeg===180?img.naturalWidth:img.naturalHeight;
+        cv.height=rotDeg===180?img.naturalHeight:img.naturalWidth;
+        const ctx=cv.getContext('2d');
+        ctx.translate(cv.width/2,cv.height/2);
+        ctx.rotate(rad);
+        ctx.drawImage(img,-img.naturalWidth/2,-img.naturalHeight/2);
+        res(cv.toDataURL('image/jpeg',0.98));
+      };
+      img.onerror=()=>res(rawSrc);
+      img.src=rawSrc;
+    });
+    cache[path]=rotated;
+    return cache[path];
+  };
   for(const am of dxml.matchAll(/<xdr:twoCellAnchor[\s\S]*?<\/xdr:twoCellAnchor>/g)){
     const a=am[0];
     const fm=a.match(/<xdr:from>\s*<xdr:col>(\d+)<\/xdr:col>[\s\S]*?<xdr:row>(\d+)<\/xdr:row>/);
@@ -658,19 +655,255 @@ async function extractImgs(zip){
     const ip=rid[r2];
     if(!ip)continue;
     const di=row-1;
-    if(!_imgPathMap[di])_imgPathMap[di]={};
-    if(col===12&&!_imgPathMap[di].foto1)_imgPathMap[di].foto1=ip;
-    else if(col===13&&!_imgPathMap[di].foto2)_imgPathMap[di].foto2=ip;
-    else if(!_imgPathMap[di].foto1&&col!==13)_imgPathMap[di].foto1=ip;
-    // Marcar que hay fotos pero no cargarlas
     if(!m[di])m[di]={};
-    m[di].foto1=_imgPathMap[di].foto1?'pending':null;
-    m[di].foto2=_imgPathMap[di].foto2?'pending':null;
+    if(col===12&&!m[di].foto1)m[di].foto1=await loadI(ip);
+    else if(col===13&&!m[di].foto2)m[di].foto2=await loadI(ip);
+    else if(!m[di].foto1&&col!==13)m[di].foto1=await loadI(ip);
   }
   return m;
 }
 
+function excelD(v){if(!v)return'';const n=parseFloat(v);if(isNaN(n)||n<40000)return v;const d=new Date(Math.round((n-25569)*86400*1000));return d.toLocaleDateString('es-PY');}
+function fmtGs(v){const n=parseFloat(v);return isNaN(n)?v:'Gs. '+n.toLocaleString('es-PY',{minimumFractionDigits:0});}
+function fmtF(f){if(!f)return'—';const[y,m,d]=f.split('-');return`${d}/${m}/${y}`;}
 
+function mkEmp(rows,imgMap){
+  const d=[];
+  rows.filter(r=>r.ri>=3).forEach((row,i)=>{
+    const c=row.cells;
+    const im=imgMap[i+1]||imgMap[i]||{};
+    const fechaRaw=parseFloat(c['B'])||0;
+    d.push({id:i,local:c['A']||'',fecha:excelD(c['B']),fechaRaw,boleta:c['C']||'',nombre:c['D']||'',cedula:c['E']||'',prestamo:fmtGs(c['G']),encargado:c['O']||c['N']||'',foto1:im.foto1||null,foto2:im.foto2||null,controles:{},obsCtrl:{},obs:'',rev:false});
+  });
+  return d.filter(x=>x.boleta).sort((a,b)=>b.fechaRaw-a.fechaRaw);
+}
+
+function mkRet(rows){
+  const d=[];
+  rows.filter(r=>r.ri>=3).forEach((row,i)=>{
+    const c=row.cells;
+    d.push({id:i,boleta:c['A']||'',local:c['B']||'',nombre:c['C']||'',fechaEmp:excelD(c['D']),estado:c['E']||'',cedula:c['G']||'',extr:(c['H']||'').toLowerCase()==='si'||(c['H']||'').toLowerCase()==='sí',prestamo:fmtGs(c['I']),fechaRet:excelD(c['J']),fechaRetRaw:parseFloat(c['J'])||0,controles:{},obsCtrl:{},obs:'',rev:false});
+  });
+  return d.filter(x=>x.boleta).sort((a,b)=>b.fechaRetRaw-a.fechaRetRaw);
+}
+
+// ─── RENDER EMPEÑOS ────────────────────────────────
+function renderEmp(){
+  document.getElementById('ucEmp').style.display='none';
+  document.getElementById('ctrlEmp').classList.add('on');
+  document.getElementById('bTxtEmp').textContent=`${dEmp.length} empeños cargados`;
+  document.getElementById('bSubEmp').textContent=`Local ${aud.localNro||'—'} — ${dEmp[0]?.local||''} | Enc: ${aud.encNombre||'—'} — Ordenados del más reciente al más antiguo`;
+  buildNav('emp');
+  const lista=document.getElementById('listaEmp');
+  lista.innerHTML='';
+  dEmp.forEach((d,i)=>{
+    const card=mkCardEmp(d,i);
+    card.style.display='none';
+    lista.appendChild(card);
+    initChecks('emp',i,NORM_EMP);
+  });
+  const primeraPendEmp=dEmp.findIndex(d=>!d.rev);
+  if(primeraPendEmp>=0){
+    const c=document.getElementById(`cEmp${primeraPendEmp}`);
+    if(c)c.style.display='';
+    setTimeout(()=>toggleCard('Emp',primeraPendEmp,true),100);
+  }
+  updProg('emp');
+}
+
+function mkCardEmp(d,i){
+  const div=document.createElement('div');
+  div.className='card';div.id=`cEmp${i}`;
+  const hasFoto1=!!d.foto1, hasFoto2=!!d.foto2;
+  const f1=hasFoto1?`<div class="foto-wrap" id="fw1emp${i}"><img id="fimg1emp${i}" src="" loading="lazy" style="opacity:0;transition:opacity .3s;transform-origin:center;"/><div class="foto-lbl">Frente — cédula</div><button class="foto-zoom" onclick="event.stopPropagation();rotarFoto('fimg1emp${i}')">↺ Rotar</button></div>`:`<div class="foto-sin"><div class="foto-sin-icon">🪪</div><span>Sin imagen</span></div>`;
+  const f2=hasFoto2?`<div class="foto-wrap" id="fw2emp${i}"><img id="fimg2emp${i}" src="" loading="lazy" style="opacity:0;transition:opacity .3s;transform-origin:center;"/><div class="foto-lbl">Dorso / firma</div><button class="foto-zoom" onclick="event.stopPropagation();rotarFoto('fimg2emp${i}')">↺ Rotar</button></div>`:`<div class="foto-sin"><div class="foto-sin-icon">🪪</div><span>Sin imagen</span></div>`;
+  div.innerHTML=`
+    <div class="card-hdr" style="cursor:default;">
+      <div><div class="card-num">#${d.boleta} — ${d.nombre}</div><div class="card-meta">CI: ${d.cedula} &nbsp;·&nbsp; ${d.prestamo} &nbsp;·&nbsp; Encargado: ${d.encargado}</div></div>
+      <div class="card-right"><span class="card-fecha">${d.fecha}</span><span class="badge b-pend" id="bdgEmp${i}">Pendiente</span></div>
+    </div>
+    <div class="card-body" id="bdyEmp${i}">
+      <div class="datos-grid">
+        <div><div class="d-lbl">Local</div><div class="d-val">${d.local}</div></div>
+        <div><div class="d-lbl">Fecha empeño</div><div class="d-val">${d.fecha}</div></div>
+        <div><div class="d-lbl">Préstamo</div><div class="d-val">${d.prestamo}</div></div>
+        <div><div class="d-lbl">Encargado</div><div class="d-val">${d.encargado}</div></div>
+      </div>
+      <div class="fotos-sec"><div class="fotos-tit">🪪 Imágenes de cédula — clic para ampliar</div><div class="fotos-grid">${f1}${f2}</div></div>
+      <div class="chk-sec">
+        <div class="chk-tit">✅ Puntos de control</div>
+
+        ${mkCi('emp',i,'comprobanteExiste',NORM_EMP.comprobanteExiste.lab)}
+
+        <div id="bloqSinCompEmp${i}" style="background:#fff8e1;border:1px solid #FAC775;border-radius:8px;padding:8px 12px;margin:4px 0 6px;font-size:11px;color:#633806;display:none;">
+          ⚠ Sin comprobante no es posible controlar los puntos restantes.
+        </div>
+
+        <div id="bloqCompEmp${i}" style="display:none;">
+          ${mkCi('emp',i,'impresionLegible',NORM_EMP.impresionLegible.lab)}
+          ${mkCi('emp',i,'imagenCargada',NORM_EMP.imagenCargada.lab)}
+          <div id="bloqSinImgEmp${i}" style="border:1.5px solid #F7C1C1;border-radius:8px;margin:4px 0 6px;overflow:hidden;display:none;">
+            <div style="padding:8px 12px;font-size:11px;font-weight:500;color:#A32D2D;">¿El encargado tiene la cédula disponible para cargar?</div>
+            <div style="display:flex;gap:8px;padding:0 12px 10px;">
+              <button onclick="cedulaDisponible('si',${i})" id="btnCedSi${i}" style="flex:1;padding:7px;border-radius:6px;border:0.5px solid #ccc;background:#f9f9f9;font-size:11px;cursor:pointer;">Sí — pendiente de cargar</button>
+              <button onclick="cedulaDisponible('no',${i})" id="btnCedNo${i}" style="flex:1;padding:7px;border-radius:6px;border:0.5px solid #F7C1C1;background:#FCEBEB;font-size:11px;color:#A32D2D;font-weight:500;cursor:pointer;">No — falta grave</button>
+            </div>
+            <div style="padding:5px 12px 8px;background:#fff8e1;border-top:0.5px solid #FAC775;font-size:10px;color:#633806;">
+              Sin imagen de cédula no es posible verificar los puntos 4, 5 y 6.
+            </div>
+          </div>
+          <div id="bloqCedEmp${i}" style="display:none;">
+            ${mkCi('emp',i,'imagenLegible',NORM_EMP.imagenLegible.lab,true)}
+            ${mkCi('emp',i,'cedulaVigente',NORM_EMP.cedulaVigente.lab,true)}
+            ${mkCi('emp',i,'documentoValido',NORM_EMP.documentoValido.lab,true)}
+            ${mkCi('emp',i,'firmaCoincide',NORM_EMP.firmaCoincide.lab,true)}
+          </div>
+          ${mkCi('emp',i,'firmaEncargadoEmp',NORM_EMP.firmaEncargadoEmp.lab)}
+        </div>
+
+      </div>
+      <div class="btn-guardar"><button class="btn btn-az" onclick="guardar('emp',${i})">✓ Guardar y siguiente</button></div>
+    </div>`;
+  return div;
+}
+
+// ─── RENDER RETIRADOS ──────────────────────────────
+function renderRet(){
+  document.getElementById('ucRet').style.display='none';
+  document.getElementById('ctrlRet').classList.add('on');
+  document.getElementById('bTxtRet').textContent=`${dRet.length} retirados cargados`;
+  document.getElementById('bSubRet').textContent=`Local ${aud.localNro||'—'} — ${dRet[0]?.local||''} | Enc: ${aud.encNombre||'—'}`;
+  buildNav('ret');
+  const lista=document.getElementById('listaRet');
+  lista.innerHTML='';
+  dRet.forEach((d,i)=>{
+    const card=mkCardRet(d,i);
+    card.style.display='none';
+    lista.appendChild(card);
+    initChecks('ret',i,NORM_RET);
+  });
+  const primeraPendRet=dRet.findIndex(d=>!d.rev);
+  if(primeraPendRet>=0){
+    const c=document.getElementById(`cRet${primeraPendRet}`);
+    if(c)c.style.display='';
+    setTimeout(()=>toggleCard('Ret',primeraPendRet,true),100);
+  }
+  updProg('ret');
+}
+
+function mkCardRet(d,i){
+  const div=document.createElement('div');
+  div.className='card';div.id=`cRet${i}`;
+  const alerta=d.extr?`<div class="alert-extr">⚠️ <span><strong>Boleta extraviada.</strong> Si no tiene comprobante debe verificar denuncia policial y libro de acta.</span></div>`:'';
+  div.innerHTML=`
+    <div class="card-hdr" style="cursor:default;">
+      <div>
+        <div class="card-num">#${d.boleta} — ${d.nombre}</div>
+        <div class="card-meta">CI: ${d.cedula} &nbsp;·&nbsp; ${d.prestamo} &nbsp;·&nbsp; Retiro: ${d.fechaRet}</div>
+      </div>
+      <div class="card-right">
+        ${d.extr?'<span class="badge b-extr">⚠ Extraviada</span>':''}
+        <span class="badge b-pend" id="bdgRet${i}">Pendiente</span>
+        
+      </div>
+    </div>
+    <div class="card-body" id="bdyRet${i}">
+      <div class="datos-grid">
+        <div><div class="d-lbl">Local</div><div class="d-val">${d.local}</div></div>
+        <div><div class="d-lbl">Fecha empeño</div><div class="d-val">${d.fechaEmp}</div></div>
+        <div><div class="d-lbl">Fecha retiro</div><div class="d-val">${d.fechaRet}</div></div>
+        <div><div class="d-lbl">Extraviada</div><div class="d-val" style="${d.extr?'color:var(--rojo);font-weight:700':''}">${d.extr?'Sí':'No'}</div></div>
+      </div>
+      ${alerta}
+      <div class="chk-sec">
+        <div class="chk-tit">✅ Puntos de control — retiro</div>
+        ${mkCi('ret',i,'comprobanteRetiro',NORM_RET.comprobanteRetiro.lab)}
+        <div class="sub-items" id="subConRet${i}">
+          ${mkCi('ret',i,'firmaRetiro',NORM_RET.firmaRetiro.lab,true)}
+          ${mkCi('ret',i,'firmaEncargado',NORM_RET.firmaEncargado.lab,true)}
+        </div>
+        <div class="sub-items" id="subSinRet${i}">
+          ${mkCi('ret',i,'denunciaPolicial',NORM_RET.denunciaPolicial.lab,true)}
+          ${mkCi('ret',i,'libroActaFirmado',NORM_RET.libroActaFirmado.lab,true)}
+          ${mkCi('ret',i,'libroFirmaCliente',NORM_RET.libroFirmaCliente.lab,true)}
+          ${mkCi('ret',i,'libroFirmaColaborador',NORM_RET.libroFirmaColaborador.lab,true)}
+          ${mkCi('ret',i,'gastoAdm',NORM_RET.gastoAdm.lab,true)}
+        </div>
+      </div>
+      <div class="btn-guardar"><button class="btn btn-az" onclick="guardar('ret',${i})">✓ Guardar y siguiente</button></div>
+    </div>`;
+  return div;
+}
+
+function mkCi(t,i,key,lab,sub=false){
+  return`<div class="ci" id="ci_${t}_${i}_${key}">
+    <div class="ci-row">
+      <span class="ci-lbl${sub?' sub':''}">${lab}</span>
+      <div class="ci-btns">
+        <button class="cb" id="cb_${t}_${i}_${key}_si" onclick="marcar('${t}',${i},'${key}','si')">✓ Sí</button>
+        <button class="cb" id="cb_${t}_${i}_${key}_no" onclick="marcar('${t}',${i},'${key}','no')">✗ No</button>
+        <button class="cb" id="cb_${t}_${i}_${key}_na" onclick="marcar('${t}',${i},'${key}','na')">N/A</button>
+      </div>
+    </div>
+    <div class="ci-obs"><input type="text" id="obs_${t}_${i}_${key}" placeholder="Comentario sobre este punto..." onchange="(${t==='emp'?'dEmp':'dRet'})[${i}].obsCtrl['${key}']=this.value"/></div>
+  </div>`;
+}
+
+// ─── INIT CHECKS (todos SI por defecto) ────────────
+function initChecks(t,i,norm){
+  const data=t==='emp'?dEmp[i]:dRet[i];
+  if(t==='emp'){
+    // Punto 1 (comprobanteExiste) arranca en blanco — el auditor confirma
+    // Todos los demás bloques ocultos hasta que punto 1 = si
+    // No inicializar controles, quedan vacíos
+  }
+  if(t==='ret'){
+    // comprobanteRetiro arranca en blanco también
+    // firmaRetiro y sub-items ocultos hasta que se marque
+  }
+}
+
+// ─── ROTAR FOTO ─────────────────────────────────────
+function rotarFoto(imgId){
+  const img=document.getElementById(imgId);
+  if(!img)return;
+  const cur=parseInt(img.dataset.rot||'0');
+  const next=(cur+90)%360;
+  img.dataset.rot=next;
+  img.style.transform=`rotate(${next}deg)`;
+  // Ajustar tamaño si está rotada 90 o 270
+  if(next===90||next===270){
+    img.style.maxHeight='100%';
+    img.style.maxWidth='180px';
+    img.style.objectFit='contain';
+  } else {
+    img.style.maxHeight='180px';
+    img.style.maxWidth='100%';
+    img.style.objectFit='contain';
+  }
+}
+
+// ─── CEDULA DISPONIBLE ──────────────────────────────
+function cedulaDisponible(resp, i){
+  const btnSi=document.getElementById(`btnCedSi${i}`);
+  const btnNo=document.getElementById(`btnCedNo${i}`);
+  if(resp==='si'){
+    if(btnSi){btnSi.style.background='#1a3a5c';btnSi.style.color='white';btnSi.style.border='none';}
+    if(btnNo){btnNo.style.background='#f9f9f9';btnNo.style.color='var(--texto)';btnNo.style.border='0.5px solid #ccc';}
+    dEmp[i].obsCtrl['imagenCargada']='Pendiente de cargar';
+    dEmp[i].cedulaGravedad='pendiente';
+  } else {
+    if(btnNo){btnNo.style.background='#A32D2D';btnNo.style.color='white';btnNo.style.border='none';}
+    if(btnSi){btnSi.style.background='#f9f9f9';btnSi.style.color='var(--texto)';btnSi.style.border='0.5px solid #ccc';}
+    dEmp[i].obsCtrl['imagenCargada']='Falta grave — encargado no tiene la cédula disponible';
+    dEmp[i].cedulaGravedad='grave';
+  }
+  // Actualizar campo de obs visible
+  const obsEl=document.getElementById(`obs_emp_${i}_imagenCargada`);
+  if(obsEl)obsEl.value=dEmp[i].obsCtrl['imagenCargada'];
+}
+
+// ─── LAZY IMG ───────────────────────────────────────
 async function loadLazyImg(foto){
   if(!foto)return null;
   if(typeof foto==='string')return foto;
@@ -744,7 +977,6 @@ function marcar(t,i,key,val){
   const data=t==='emp'?dEmp:dRet;
   data[i].controles[key]=val;
   updCheckUI(t,i,key,val);
-  autoSave();
 
   if(t==='emp'){
     if(key==='comprobanteExiste'){
@@ -1112,35 +1344,26 @@ function toggleCard(t,i,force){
   // Lazy load imágenes al abrir empeños
   if(open&&t==='Emp'){
     const d=dEmp[i];
-    if(!d)return;
-    const cargarSlot=async(slot,imgId,wrapId,lbl)=>{
-      const fotoVal=slot===1?d.foto1:d.foto2;
-      if(!fotoVal)return;
-      let src=fotoVal;
-      if(fotoVal==='pending'){
-        src=await cargarFotoLazy(i,slot);
+    if(d&&d.foto1){
+      loadLazyImg(d.foto1).then(src=>{
         if(!src)return;
-        if(slot===1)d.foto1=src; else d.foto2=src;
-        // Reemplazar foto-sin por foto-wrap si todavía es placeholder
-        const card=document.getElementById(`cEmp${i}`);
-        if(card){
-          const grid=card.querySelector('.fotos-grid');
-          if(grid){
-            const sinDiv=grid.children[slot-1];
-            if(sinDiv&&sinDiv.classList.contains('foto-sin')){
-              sinDiv.outerHTML=`<div class="foto-wrap" id="${wrapId}"><img id="${imgId}" src="${src}" loading="lazy" style="opacity:1;transition:opacity .3s;transform-origin:center;" onclick="openLb('${src}','${imgId}')"/><div class="foto-lbl">${lbl}</div><button class="foto-zoom" onclick="event.stopPropagation();rotarFoto('${imgId}')">↺ Rotar</button></div>`;
-              return;
-            }
-          }
-        }
-      }
-      const el=document.getElementById(imgId);
-      if(el){el.src=src;el.style.opacity='1';el.onclick=()=>openLb(src,imgId);}
-      const fw=document.getElementById(wrapId);
-      if(fw)fw.onclick=()=>openLb(src,imgId);
-    };
-    cargarSlot(1,`fimg1emp${i}`,`fw1emp${i}`,'Frente — cédula');
-    cargarSlot(2,`fimg2emp${i}`,`fw2emp${i}`,'Dorso / firma');
+        d.foto1=src;
+        const el=document.getElementById(`fimg1emp${i}`);
+        if(el){el.src=src;el.style.opacity='1';el.onclick=()=>openLb(src,`fimg1emp${i}`);}
+        const fw=document.getElementById(`fw1emp${i}`);
+        if(fw)fw.onclick=()=>openLb(src,`fimg1emp${i}`);
+      });
+    }
+    if(d&&d.foto2){
+      loadLazyImg(d.foto2).then(src=>{
+        if(!src)return;
+        d.foto2=src;
+        const el=document.getElementById(`fimg2emp${i}`);
+        if(el){el.src=src;el.style.opacity='1';el.onclick=()=>openLb(src,`fimg2emp${i}`);}
+        const fw=document.getElementById(`fw2emp${i}`);
+        if(fw)fw.onclick=()=>openLb(src,`fimg1emp${i}`);
+      });
+    }
   }
 }
 
@@ -1750,17 +1973,6 @@ function expPDF(){
 // ─── SELECTOR FORMATO ACTA ──────────────────────────
 let fmtActa = 'word';
 
-// ─── SUPERVISORES POR LOCAL ─────────────────────────────
-const ZONA_ERNESTO=[1,2,3,5,7,9,11,15,16,17,18,19,21,22,25,26,29,30,31,32,42,43,44,45,49,51,52,57,58,59,63,65];
-const ZONA_ALEXIS=[4,6,8,10,12,13,14,20,23,24,27,28,33,34,35,36,37,38,39,40,41,46,47,48,50,53,54,55,56,60,61,62,64];
-function getEmailSupervisor(localNro){
-  const n=parseInt(localNro);
-  if(ZONA_ERNESTO.includes(n))return 'ernesto.aguero@laplata.com.py';
-  if(ZONA_ALEXIS.includes(n))return 'alexis.arzamendia@laplata.com.py';
-  return null;
-}
-
-
 function selFmt(fmt){
   fmtActa = fmt;
   const btnW = document.getElementById('fmtWord');
@@ -2022,37 +2234,7 @@ async function generarActaPDF(){
   }
 }
 
-// ─── EMAIL ──────────────────────────────────────────
-function abrirModalEmail(){
-  const dE=dEmp.filter(d=>Object.entries(d.controles).some(([k,v])=>v==='no'&&k!=='comprobanteRetiro'));
-  const dR=dRet.filter(d=>Object.entries(d.controles).some(([k,v])=>v==='no'&&k!=='comprobanteRetiro'));
-  const sinDesv=dE.length+dR.length===0;
-  const localNro=(aud.localNro||'00').padStart(2,'0');
-  const emailDestino=`suc${localNro}@laplata.com.py`;
-  const localDesc=`${aud.localNro||'—'} — ${dEmp[0]?.local||dRet[0]?.local||'—'}`;
-  const asunto=`Acta FL-CAL-12 — Control de Documentos — Local ${localDesc} — ${fmtF(aud.f)}`;
-  document.getElementById('emailDestinoMostrar').textContent=emailDestino;
-  document.getElementById('emailAsuntoMostrar').textContent=asunto;
-  const supEmail=getEmailSupervisor(aud.localNro);
-  const ccBase='marcio.rodriguez@laplata.com.py'+(supEmail?', '+supEmail:'')+', feliciano.melgarejo@laplata.com.py';
-  const ccFull=aud.email&&aud.email!=='feliciano.melgarejo@laplata.com.py'?ccBase+', '+aud.email:ccBase;
-  document.getElementById('modalCCMostrar').textContent=ccFull;
-  const asuntoFinal=sinDesv
-    ?`Control de Documentos — Sin desviaciones — Local ${localDesc} — ${fmtF(aud.f)}`
-    :asunto;
-  document.getElementById('emailAsuntoMostrar').textContent=asuntoFinal;
-  const notaEl=document.getElementById('modalEmailNota');
-  if(notaEl)notaEl.textContent=sinDesv
-    ?'Se enviará un correo destacando el buen manejo documental del período controlado.'
-    :'El correo incluirá el resumen de desviaciones detectadas y la instrucción de remitir el acta firmada a Talento Humano a la brevedad posible.';
-  document.getElementById('modalEmail').style.display='flex';
-}
-
-function cerrarModalEmail(){
-  document.getElementById('modalEmail').style.display='none';
-}
-
-// ═════════════ EMAIL HELPERS CONTROL DOCS (EXACTOS DE PRODUCCIÓN) ═════════════
+// ─── EMAIL HTML BUILDERS (email-safe: tables + bgcolor) ──
 function _emailHeader(bgColor, badgeText, badgeColor){
   return `<tr><td bgcolor="${bgColor}" style="background-color:${bgColor};padding:14px 24px;border-radius:8px 8px 0 0;">
     <table width="100%" cellpadding="0" cellspacing="0" border="0"><tr>
@@ -2308,11 +2490,37 @@ function buildEmailHtmlFaltaGrave(faltas, aud, localDesc){
   </table>`;
 }
 
+// ─── EMAIL ──────────────────────────────────────────
+function abrirModalEmail(){
+  const dE=dEmp.filter(d=>Object.entries(d.controles).some(([k,v])=>v==='no'&&k!=='comprobanteRetiro'));
+  const dR=dRet.filter(d=>Object.entries(d.controles).some(([k,v])=>v==='no'&&k!=='comprobanteRetiro'));
+  const sinDesv=dE.length+dR.length===0;
+  const localNro=(aud.localNro||'00').padStart(2,'0');
+  const emailDestino=`suc${localNro}@laplata.com.py`;
+  const localDesc=`${aud.localNro||'—'} — ${dEmp[0]?.local||dRet[0]?.local||'—'}`;
+  const asunto=`Acta FL-CAL-12 — Control de Documentos — Local ${localDesc} — ${fmtF(aud.f)}`;
+  document.getElementById('emailDestinoMostrar').textContent=emailDestino;
+  document.getElementById('emailAsuntoMostrar').textContent=asunto;
+  const ccBase='marcio.rodriguez@laplata.com.py, supervisores@laplata.com.py, feliciano.melgarejo@laplata.com.py';
+  const ccFull=aud.email&&aud.email!=='feliciano.melgarejo@laplata.com.py'?ccBase+', '+aud.email:ccBase;
+  document.getElementById('modalCCMostrar').textContent=ccFull;
+  const asuntoFinal=sinDesv
+    ?`Control de Documentos — Sin desviaciones — Local ${localDesc} — ${fmtF(aud.f)}`
+    :asunto;
+  document.getElementById('emailAsuntoMostrar').textContent=asuntoFinal;
+  const notaEl=document.getElementById('modalEmailNota');
+  if(notaEl)notaEl.textContent=sinDesv
+    ?'Se enviará un correo destacando el buen manejo documental del período controlado.'
+    :'El correo incluirá el resumen de desviaciones detectadas y la instrucción de remitir el acta firmada a Talento Humano a la brevedad posible.';
+  document.getElementById('modalEmail').style.display='flex';
+}
+
+function cerrarModalEmail(){
+  document.getElementById('modalEmail').style.display='none';
+}
+
 async function enviarActaEmail(){
-  if(_correoEnviado){
-    const ok=confirm('⚠️ ¡EL CORREO YA FUE ENVIADO!\n\n¿Querés volver a enviar?\n¿Querés llenar el buzón de la gente?\n\nSolo confirmá si es realmente necesario.');
-    if(!ok)return;
-  }
+
 
   toast('Generando PDF y enviando...','ok');
 
@@ -2321,36 +2529,11 @@ async function enviarActaEmail(){
   const dR=dRet.filter(d=>Object.entries(d.controles).some(([k,v])=>v==='no'&&k!=='comprobanteRetiro'));
   const sinDesv=dE.length+dR.length===0;
   const localDesc=`${aud.localNro||'—'} — ${dEmp[0]?.local||dRet[0]?.local||'—'}`;
-  const allD=[...dE.map(d=>({...d,tipo:'Empeño',norm:NORM_EMP,labs:LABS_EMP})),
-              ...dR.map(d=>({...d,tipo:'Retiro',norm:NORM_RET,labs:LABS_RET}))];
-
-  let resumen='';
-  let itemNum=0;
-  allD.forEach((d,idx)=>{
-    const keys=Object.entries(d.controles).filter(([,v])=>v==='no').map(([k])=>k);
-    if(!keys.length)return;
-    itemNum++;
-    resumen+=`----------------------------------------\n`;
-    resumen+=`${itemNum}. Boleta #${d.boleta} — ${d.tipo} — ${d.nombre}\n`;
-    keys.forEach(k=>{
-      resumen+=`   • ${d.labs[k]||k}: No conforme`;
-      if(d.obsCtrl[k]) resumen+=` — ${d.obsCtrl[k]}`;
-      resumen+='\n';
-    });
-    resumen+='\n';
-  });
-  resumen+='----------------------------------------\n';
 
   const comentEmpCorr=getComentAuditor();
   const comentRetCorr='';
-  const sep='\n─────────────────────────────';
-  const bloqueComent=(comentEmpCorr||comentRetCorr)
-    ?(sep+'\nCOMENTARIOS DEL AUDITOR'+sep
-    +(comentEmpCorr?'\nEmpeños: '+comentEmpCorr:'')
-    +(comentRetCorr?'\nRetirados: '+comentRetCorr:'')
-    +'\n─────────────────────────────\n')
-    :'';
 
+  // Construir HTML del mensaje (email-safe: tables + bgcolor)
   const mensaje = sinDesv
     ? buildEmailHtmlSinDesv(dEmp.length, dRet.length, aud, localDesc, comentEmpCorr, comentRetCorr)
     : buildEmailHtmlConDesv(dE, dR, aud, localDesc, comentEmpCorr, comentRetCorr);
@@ -2405,7 +2588,7 @@ async function enviarActaEmail(){
         ?`Control de Documentos — Sin desviaciones — Local ${localDesc} — ${fmtF(aud.f)}`
         :`Acta FL-CAL-12 — Control de Documentos — Local ${localDesc} — ${fmtF(aud.f)}`,
       message: mensaje,
-      cc_email: ccFull,
+      cc_email: 'marcio.rodriguez@laplata.com.py,supervisores@laplata.com.py,feliciano.melgarejo@laplata.com.py',
     };
 
     const brevoRes = await fetch('https://api.brevo.com/v3/smtp/email', {
@@ -2420,17 +2603,12 @@ async function enviarActaEmail(){
         replyTo: {email: params.reply_to},
         cc: [
           {email: 'marcio.rodriguez@laplata.com.py'},
-          ...(getEmailSupervisor(aud.localNro)?[{email:getEmailSupervisor(aud.localNro)}]:[]),
+          {email: 'supervisores@laplata.com.py'},
           {email: 'feliciano.melgarejo@laplata.com.py'},
-                    ...(aud.email&&aud.email!=='feliciano.melgarejo@laplata.com.py'?[{email:aud.email}]:[]),
+          ...(aud.email&&aud.email!=='feliciano.melgarejo@laplata.com.py'?[{email:aud.email}]:[]),
         ],
         subject: params.subject,
         htmlContent: params.message,
-        attachment: [{
-          content: pdfBase64,
-          name: `Acta_Control_Docs_Local${localNro}_${fmtF(aud.f).replace(/\//g,'-')}.pdf`,
-          type: 'application/pdf',
-        }],
       }),
     });
     if(!brevoRes.ok){
@@ -2438,7 +2616,6 @@ async function enviarActaEmail(){
       throw new Error(err.message||'Error al enviar');
     }
     cerrarModalEmail();
-    _correoEnviado=true;
     toast('Correo enviado correctamente ✓','ok');
     // Enviar correo de faltas graves si hay
     const faltas=detectarFaltasGraves();
@@ -2668,30 +2845,9 @@ async function enviarCorreoFaltasGraves(){
   if(!faltas.length)return;
 
   const localDesc=`${aud.localNro||'—'} — ${dEmp[0]?.local||dRet[0]?.local||'—'}`;
-  const sep='━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━';
 
-  let detalle='';
-  faltas.forEach((f,i)=>{
-    detalle+=`${sep}
-⚠ FALTA GRAVE #${i+1}
-Boleta #${f.boleta} — ${f.tipo} — ${f.nombre}
-Motivo: ${f.motivo}${f.comentario?'\nComentario del auditor: '+f.comentario:''}
-`;
-  });
-
-  const mensaje=`Estimados,
-
-Durante el control de documentos realizado el ${fmtF(aud.f)} en el Local ${localDesc}, por el Auditor ${aud.n}, se detectaron las siguientes faltas graves que requieren intervención del departamento de Talento Humano:
-
-${detalle}${sep}
-
-De acuerdo al Reglamento Interno de Trabajo, estas faltas requieren documentación y sanción correspondiente por parte del departamento de Talento Humano.
-
-Encargado del local: ${aud.encNombre||'—'} — CI: ${aud.encCedula||'—'}
-
-Atentamente,
-${aud.n}
-Auditoría Interna — La Plata S.R.L.`;
+  // Construir HTML del mensaje (email-safe: tables + bgcolor)
+  const mensaje = buildEmailHtmlFaltaGrave(faltas, aud, localDesc);
 
   try{
     const brevoRes=await fetch('https://api.brevo.com/v3/smtp/email',{
@@ -2707,7 +2863,7 @@ Auditoría Interna — La Plata S.R.L.`;
           {email:'feliciano.melgarejo@laplata.com.py'},
         ],
         subject:`⚠ FALTA GRAVE — Control de Documentos — Local ${localDesc} — ${fmtF(aud.f)}`,
-        textContent:mensaje,
+        htmlContent:mensaje,
       }),
     });
     if(brevoRes.ok){
@@ -2960,7 +3116,6 @@ function expExcel(t){
 // Verificar sesión anterior al cargar
 window.addEventListener('load',()=>{
   setTimeout(checkSesionAnterior, 300);
-  setInterval(autoSave, 30000);
 });
 
 // Banner de instalación PWA
@@ -3009,7 +3164,7 @@ function instalarPWA(){
     <div style="font-size:15px;font-weight:700;color:#1a3a5c;margin-bottom:16px;">📧 Enviar Acta por Correo</div>
     <div style="background:#f4f5f7;border-radius:8px;padding:12px;font-size:12px;color:#333;margin-bottom:16px;line-height:1.8;">
       <div><b>Para:</b> <span id="emailDestinoMostrar" style="color:#1a3a5c;"></span></div>
-      <div><b>CC:</b> <span id="modalCCMostrar">marcio.rodriguez, supervisor de zona, feliciano.melgarejo</span></div>
+      <div><b>CC:</b> <span id="modalCCMostrar">marcio.rodriguez@laplata.com.py, supervisores@laplata.com.py, feliciano.melgarejo@laplata.com.py</span></div>
       <div><b>Asunto:</b> <span id="emailAsuntoMostrar" style="color:#1a3a5c;"></span></div>
     </div>
     <div style="background:#fff8e1;border:1px solid #FAC775;border-radius:8px;padding:10px 12px;font-size:11px;color:#633806;margin-bottom:16px;line-height:1.6;">
