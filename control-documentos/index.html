@@ -3118,6 +3118,9 @@ window.addEventListener('load',()=>{
   setTimeout(checkSesionAnterior, 300);
 });
 
+// Auto-guardado cada 30 segundos
+setInterval(autoSave, 30000);
+
 // Banner de instalación PWA
 let deferredPrompt;
 window.addEventListener('beforeinstallprompt', e=>{
