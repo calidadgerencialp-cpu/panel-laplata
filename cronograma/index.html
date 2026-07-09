@@ -4,6 +4,7 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>Mi Día -- La Plata SRL</title>
+<link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/@tabler/icons-webfont@2.47.0/dist/tabler-icons.min.css">
 <style>
 *{box-sizing:border-box;margin:0;padding:0}
 :root{
@@ -284,29 +285,48 @@ tr.group-header td{
 }
 </style>
 <style>
-body{padding:1.5rem;max-width:760px;margin:0 auto;}
-.day-card{background:var(--bg-card);border:1px solid var(--border);border-radius:12px;padding:1rem 1.25rem;margin-bottom:.75rem;}
-.day-card .act{font-weight:600;font-size:14px;}
-.day-card .meta{color:var(--text-secondary);font-size:12px;margin-top:.25rem;}
-.tag{display:inline-block;padding:.15rem .55rem;border-radius:20px;font-size:10px;font-weight:700;text-transform:uppercase;margin-left:.4rem;}
-.tag-pend{background:rgba(245,158,11,.15);color:var(--accent-amber);}
-.tag-ok{background:rgba(16,185,129,.15);color:var(--accent-green);}
-.tag-no{background:rgba(239,68,68,.15);color:var(--accent-red);}
-.turno-h{font-size:12px;text-transform:uppercase;letter-spacing:.5px;color:var(--text-secondary);margin:1.2rem 0 .5rem;}
-.topfila{display:flex;gap:.6rem;flex-wrap:wrap;align-items:center;margin-bottom:1.2rem;}
-select,input[type=date]{padding:.5rem .8rem;border-radius:8px;border:1px solid var(--border);background:var(--bg-secondary);color:var(--text-primary);font-size:13px;}
-.navbtn{padding:.5rem .8rem;border-radius:8px;border:1px solid var(--border);background:var(--bg-secondary);color:var(--text-primary);font-size:13px;cursor:pointer;}
+body{padding:1.5rem;max-width:520px;margin:0 auto;}
+.dh-top{display:flex;align-items:center;justify-content:space-between;margin-bottom:1.1rem;}
+.dh-aud{font-size:12px;color:var(--text-secondary);margin:0;}
+.dh-fecha{font-size:19px;font-weight:600;margin:2px 0 0;}
+.dh-nav{display:flex;gap:6px;}
+.navbtn{width:32px;height:32px;padding:0;border-radius:8px;border:1px solid var(--border);background:var(--bg-secondary);color:var(--text-primary);cursor:pointer;display:flex;align-items:center;justify-content:center;font-size:16px;}
 .navbtn:hover{border-color:var(--text-secondary);}
+.btn-hoy{padding:6px 14px;border-radius:8px;border:1px solid var(--border);background:var(--bg-secondary);color:var(--text-primary);cursor:pointer;font-size:13px;}
+.btn-hoy:hover{border-color:var(--text-secondary);}
+.dh-stats{display:flex;gap:8px;margin-bottom:1.4rem;}
+.dh-stat{flex:1;border-radius:10px;padding:.6rem;text-align:center;}
+.dh-stat b{font-size:20px;font-weight:600;display:block;}
+.dh-stat span{font-size:11px;}
+.dh-selrow{display:flex;gap:.6rem;flex-wrap:wrap;align-items:center;margin-bottom:1.4rem;}
+select{padding:.5rem .8rem;border-radius:8px;border:1px solid var(--border);background:var(--bg-secondary);color:var(--text-primary);font-size:13px;flex:1;}
+.turno-h{display:flex;align-items:center;gap:8px;margin:0 0 .6rem;}
+.turno-h .dot{width:6px;height:6px;border-radius:50%;}
+.turno-h span{font-size:11px;font-weight:600;text-transform:uppercase;letter-spacing:.05em;color:var(--text-secondary);}
+.day-card{border-radius:10px;padding:.85rem 1rem;margin-bottom:.6rem;display:flex;align-items:center;gap:10px;}
+.day-card .icowrap{width:34px;height:34px;border-radius:8px;display:flex;align-items:center;justify-content:center;flex-shrink:0;}
+.day-card .icowrap i{font-size:18px;}
+.day-card .act{font-size:14px;font-weight:600;margin:0;}
+.day-card .meta{font-size:12px;margin:2px 0 0;}
 </style>
 </head>
 <body>
-<div class="header">
-  <div class="header-left">
-    <h1>Mi Día</h1>
-    <p>Gestión de Calidad -- La Plata SRL</p>
+<div class="dh-top">
+  <div>
+    <p class="dh-aud" id="lbl-aud">&nbsp;</p>
+    <p class="dh-fecha" id="lbl-fecha">&nbsp;</p>
+  </div>
+  <div class="dh-nav">
+    <button class="navbtn" onclick="cambiarDia(-1)" aria-label="Día anterior"><i class="ti ti-chevron-left" aria-hidden="true"></i></button>
+    <button class="btn-hoy" onclick="irHoy()">Hoy</button>
+    <button class="navbtn" onclick="cambiarDia(1)" aria-label="Día siguiente"><i class="ti ti-chevron-right" aria-hidden="true"></i></button>
   </div>
 </div>
-<div class="topfila">
+<div class="dh-stats">
+  <div class="dh-stat" style="background:var(--bg-accent);"><b id="stat-tareas" style="color:var(--text-accent);">0</b><span style="color:var(--text-accent);">Tareas hoy</span></div>
+  <div class="dh-stat" style="background:var(--bg-secondary);"><b id="stat-locales">0</b><span style="color:var(--text-secondary);">Sucursales</span></div>
+</div>
+<div class="dh-selrow">
   <select id="sel-aud" onchange="guardarAud();render()">
     <option value="">-- Elegí tu nombre --</option>
     <option value="Arnaldo Bruno">Arnaldo Bruno</option>
@@ -315,9 +335,7 @@ select,input[type=date]{padding:.5rem .8rem;border-radius:8px;border:1px solid v
     <option value="Tony Chavez">Tony Chavez</option>
     <option value="Feliciano Melgarejo">Feliciano Melgarejo</option>
   </select>
-  <button class="navbtn" onclick="cambiarDia(-1)">‹ Día anterior</button>
-  <input type="date" id="sel-fecha" onchange="render()">
-  <button class="navbtn" onclick="cambiarDia(1)">Día siguiente ›</button>
+  <input type="date" id="sel-fecha" onchange="render()" style="display:none;">
 </div>
 <div id="body"></div>
 <script>
@@ -410,18 +428,40 @@ function cambiarDia(delta){
   el.value = d.toISOString().slice(0,10);
   render();
 }
+function irHoy(){
+  document.getElementById('sel-fecha').value = new Date().toISOString().slice(0,10);
+  render();
+}
 function esc(s){
   return String(s==null?'':s).replace(/[&<>"']/g, function(c){
     return {'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c];
   });
 }
 
+function tipoInfo(actividad){
+  var a = String(actividad||'').toLowerCase();
+  if(a.indexOf('inventario') === 0){
+    return {icon:'ti-clipboard-list', bg:'#E6F1FB', icoBg:'#B5D4F4', title:'#0C447C', sub:'#185FA5', dot:'#378ADD'};
+  }
+  if(a.indexOf('control de doc') === 0){
+    return {icon:'ti-file-text', bg:'#EEEDFE', icoBg:'#CECBF6', title:'#3C3489', sub:'#534AB7', dot:'#7F77DD'};
+  }
+  if(a === 'arqueo de caja'){
+    return {icon:'ti-cash', bg:'#FAECE7', icoBg:'#F0997B', title:'#4A1B0C', sub:'#993C1D', dot:'#D85A30'};
+  }
+  return {icon:'ti-calendar-event', bg:'var(--bg-secondary)', icoBg:'var(--border)', title:'var(--text-primary)', sub:'var(--text-secondary)', dot:'var(--text-muted)'};
+}
+
 function render(){
   var aud = document.getElementById('sel-aud').value;
   var fecha = document.getElementById('sel-fecha').value;
   var body = document.getElementById('body');
+  document.getElementById('lbl-aud').textContent = aud || 'Sin auditor seleccionado';
+  document.getElementById('lbl-fecha').textContent = fmtFechaLarga(fecha);
   if(!aud){
-    body.innerHTML = '<div style="text-align:center;color:var(--text-secondary);padding:3rem 0;">Elegí tu nombre para ver tus tareas.</div>';
+    body.innerHTML = '<div class="day-card" style="background:var(--bg-secondary);justify-content:center;color:var(--text-secondary);">Elegí tu nombre para ver tus tareas.</div>';
+    document.getElementById('stat-tareas').textContent = '0';
+    document.getElementById('stat-locales').textContent = '0';
     return;
   }
 
@@ -432,10 +472,14 @@ function render(){
   var deHoy = actividades.filter(function(a){ return a.fecha === fecha && esMio(a); });
   var pendientes = actividades.filter(function(a){ return a.plan === 'Falta asignar' && a.fecha !== fecha && esMio(a); });
 
-  var html = '<h2 style="font-size:16px;margin-bottom:.8rem;">' + fmtFechaLarga(fecha) + '</h2>';
+  var locales = {};
+  deHoy.forEach(function(a){ if(a.local) locales[a.local] = true; });
+  document.getElementById('stat-tareas').textContent = deHoy.length;
+  document.getElementById('stat-locales').textContent = Object.keys(locales).length;
 
+  var html = '';
   if(!deHoy.length){
-    html += '<div class="day-card" style="text-align:center;color:var(--text-secondary);">Sin actividades programadas para este día.</div>';
+    html += '<div class="day-card" style="background:var(--bg-secondary);justify-content:center;color:var(--text-secondary);">Sin actividades programadas para este día.</div>';
   } else {
     var ordenTurnos = ['Mañana','Manana','Tarde','Jornada completa'];
     var turnosPresentes = [];
@@ -449,27 +493,32 @@ function render(){
       return ia - ib;
     });
     turnosPresentes.forEach(function(t){
-      html += '<div class="turno-h">' + esc(t) + '</div>';
+      var dotColor = tipoInfo(deHoy.filter(function(a){return (a.turno||'Jornada completa')===t;})[0].actividad).dot;
+      html += '<div class="turno-h"><div class="dot" style="background:'+dotColor+'"></div><span>' + esc(t) + '</span></div>';
       deHoy.filter(function(a){ return (a.turno||'Jornada completa') === t; }).forEach(function(a){
-        var tagClass = a.estado === 'Realizado' ? 'tag-ok' : (a.estado === 'No realizado' ? 'tag-no' : 'tag-pend');
-        html += '<div class="day-card">' +
-          '<div class="act">' + esc(a.actividad) +
-          (a.especificacion && a.especificacion !== 'General' ? ' (' + esc(a.especificacion) + ')' : '') +
-          '<span class="tag ' + tagClass + '">' + esc(a.estado || 'Pendiente') + '</span></div>' +
-          '<div class="meta">' + (a.local ? esc(a.local) : 'Sin sucursal asignada') +
-          (a.observacion ? ' · ' + esc(a.observacion) : '') + '</div>' +
-          '</div>';
+        var ti = tipoInfo(a.actividad);
+        html += '<div class="day-card" style="background:' + ti.bg + '">' +
+          '<div class="icowrap" style="background:' + ti.icoBg + '"><i class="' + ti.icon + ' ti" style="color:' + ti.title + '" aria-hidden="true"></i></div>' +
+          '<div style="flex:1;">' +
+          '<p class="act" style="color:' + ti.title + '">' + esc(a.actividad) +
+          (a.especificacion && a.especificacion !== 'General' ? ' (' + esc(a.especificacion) + ')' : '') + '</p>' +
+          '<p class="meta" style="color:' + ti.sub + '">' + (a.local ? esc(a.local) : 'Sin sucursal asignada') +
+          (a.observacion ? ' · ' + esc(a.observacion) : '') + '</p>' +
+          '</div></div>';
       });
     });
   }
 
   if(pendientes.length){
-    html += '<div class="turno-h">Pendientes por programar</div>';
+    html += '<div class="turno-h"><div class="dot" style="background:var(--text-muted)"></div><span>Pendientes por programar</span></div>';
     pendientes.forEach(function(a){
-      html += '<div class="day-card">' +
-        '<div class="act">' + esc(a.actividad) + '<span class="tag tag-pend">Falta asignar</span></div>' +
-        '<div class="meta">' + esc(a.local||'') + (a.observacion ? ' · ' + esc(a.observacion) : '') + '</div>' +
-        '</div>';
+      var ti = tipoInfo(a.actividad);
+      html += '<div class="day-card" style="background:' + ti.bg + '">' +
+        '<div class="icowrap" style="background:' + ti.icoBg + '"><i class="' + ti.icon + ' ti" style="color:' + ti.title + '" aria-hidden="true"></i></div>' +
+        '<div style="flex:1;">' +
+        '<p class="act" style="color:' + ti.title + '">' + esc(a.actividad) + '</p>' +
+        '<p class="meta" style="color:' + ti.sub + '">' + esc(a.local||'') + (a.observacion ? ' · ' + esc(a.observacion) : '') + '</p>' +
+        '</div></div>';
     });
   }
 
